@@ -679,12 +679,20 @@ void playGame() {
         xClient++;
         String x = String(xClient);
         bleReadWriteXCharacteristic->writeValue(x.c_str(), false);
+      } else {
+        xClient = 0;
+        String x = String(xClient);
+        bleReadWriteXCharacteristic->writeValue(x.c_str(), false);
       }
     }
   } else if (x < 500) {
     for (int i = 0; i < acceleration; i++) {
       if ((xClient - 1) > 0) {
         xClient--;
+        String x = String(xClient);
+        bleReadWriteXCharacteristic->writeValue(x.c_str(), false);
+      } else {
+        xClient = 320;
         String x = String(xClient);
         bleReadWriteXCharacteristic->writeValue(x.c_str(), false);
       }
@@ -697,12 +705,20 @@ void playGame() {
         yClient++;
         String y = String(yClient);
         bleReadWriteYCharacteristic->writeValue(y.c_str(), false);
+      } else {
+        yClient = 0;
+        String y = String(yClient);
+        bleReadWriteYCharacteristic->writeValue(y.c_str(), false);
       }
     }
   } else if (y > 560) {
     for (int i = 0; i < acceleration; i++) {
       if ((yClient - 1) > 0) {
         yClient--;
+        String y = String(yClient);
+        bleReadWriteYCharacteristic->writeValue(y.c_str(), false);
+      } else {
+        yClient = 240;
         String y = String(yClient);
         bleReadWriteYCharacteristic->writeValue(y.c_str(), false);
       }

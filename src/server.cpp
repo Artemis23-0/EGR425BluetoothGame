@@ -634,12 +634,18 @@ void playGame() {
       if ((xServer + 1) < 320) {
         xServer++;
         locationWasUpdated = true;
+      } else {
+        xServer = 0;
+        locationWasUpdated = true;
       }
     }
   } else if (x < 500) {
     for (int i = 0; i < acceleration; i++) {
       if ((xServer - 1) > 0) {
         xServer--;
+        locationWasUpdated = true;
+      } else {
+        xServer = 320;
         locationWasUpdated = true;
       }
     }
@@ -650,12 +656,18 @@ void playGame() {
       if ((yServer + 1) < 240) {
         yServer++;
         locationWasUpdated = true;
+      } else {
+        yServer = 0;
+        locationWasUpdated = true;
       }
     }
   } else if (y > 560) {
     for (int i = 0; i < acceleration; i++) {
       if ((yServer - 1) > 0) {
         yServer--;
+        locationWasUpdated = true;
+      } else {
+        yServer = 240;
         locationWasUpdated = true;
       }
     }
