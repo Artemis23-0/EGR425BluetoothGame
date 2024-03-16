@@ -29,7 +29,6 @@ BLECharacteristic *bleReadWriteYCharacteristic;
 bool locationWasUpdated = true;
 
 // Gameplay Characteristics/Variables
-bool gameStarted = false;
 bool chooseCharacterScreenUpdated = false;
 
 // Characteristics for each player's player type (2) and when an opponents powerup is used (2), and gamestate (1)
@@ -72,9 +71,11 @@ uint32_t button_mask = (1UL << BUTTON_START) | (1UL << BUTTON_SELECT);
 ButtonColors onCol = {BLACK, WHITE, WHITE};
 ButtonColors offCol = {TFT_RED, BLACK, NODRAW};
 ButtonColors offColTut = {TFT_CYAN, BLACK, NODRAW};
+ButtonColors offColStart = {TFT_GREEN, BLACK, NODRAW};
 Button DRAGON_BTN(50, 100, 100, 50, false, "DRAGON", offCol, onCol);
 Button PRINCESS_BTN(160, 100, 100, 50, false, "PRINCESS", offCol, onCol);
-Button TUTORIAL(210, 190, 100, 50, false, "Tutorial", offColTut, onCol);
+Button TUTORIAL(10, 190, 100, 50, false, "Tutorial", offColTut, onCol);
+Button START(210, 190, 100, 50, false, "Start", offColStart, onCol);
 Button ENDTUTORIAL(100, 60, 100, 50, false, "X", offColTut, onCol);
 
 // joystick and button coordinates
@@ -148,8 +149,14 @@ class MyCharacteristicCallbacks: public BLECharacteristicCallbacks {
             // extrac the y value
             std::string readGameState = pCharacteristic->getValue();
             String valGameState = readGameState.c_str();
-            if ((valGameState.toInt() - 1) != 2) {
-              gameState = Gameplay(valGameState.toInt() - 1);
+            Serial.print("VAL GAME STATE: ");
+            Serial.println(valGameState);
+            if (valGameState.toInt() == 1 || valGameState.toInt() == 2) {
+              gameState = gameState;
+            } else if (valGameState.toInt() == 3) {
+              gameState = S_GAME;
+            } else {
+              gameState = S_GAME_OVER;
             }
         }
     }
@@ -210,11 +217,15 @@ void drawSelectedCharacterName();
 void princessTapped(Event& e);
 void dragonTapped(Event& e);
 void tutorialTapped(Event& e);
+void startTapped(Event& e);
 void startTutorial();
 void endTutorialTapped(Event& e);
 void hideButtons();
 
-void drawDots(uint32_t serverX, uint32_t serverY, uint32_t clientX, uint32_t clientY);
+void drawCharacters(uint32_t serverX, uint32_t serverY, uint32_t clientX, uint32_t clientY);
+void drawCharacterImage(String iconName, int resizeMult, int xLoc, int yLoc);
+void printDistance();
+
 void serverAccelIncrement();
 String milis_to_seconds(long milis);
 
@@ -267,6 +278,7 @@ void setup()
     PRINCESS_BTN.addHandler(princessTapped, E_TAP);
     DRAGON_BTN.addHandler(dragonTapped, E_TAP);
     TUTORIAL.addHandler(tutorialTapped, E_TAP);
+    START.addHandler(startTapped, E_TAP);
     ENDTUTORIAL.addHandler(endTutorialTapped, E_TAP);
 }
 
@@ -277,7 +289,7 @@ void loop()
 {
     M5.update();
     if (deviceConnected) {
-      if (!gameStarted) {
+      if (gameState != S_GAME && gameState != S_GAME_OVER) {
         if (gameState == S_PLAYER_SELECT && chooseCharacterScreenUpdated) {
           chooseCharacter();
         } else if (gameState == S_TUTORIAL) {
@@ -366,6 +378,7 @@ void chooseCharacter() {
   PRINCESS_BTN.draw();
   DRAGON_BTN.draw();
   TUTORIAL.draw();
+  START.draw();
 }
 
 ///////////////////////////////////////////////////////////////
@@ -433,6 +446,18 @@ void tutorialTapped(Event& e) {
  int gameStateLocal = 2;
  bleGameStateCharacteristic->setValue(gameStateLocal);
  bleGameStateCharacteristic->notify();
+}
+
+///////////////////////////////////////////////////////////////
+// Starts game
+///////////////////////////////////////////////////////////////
+void startTapped(Event& e) {
+  if (opponentPlayer != UNCHOSEN && chosenPlayer != UNCHOSEN) {
+    gameState = S_GAME;
+    int gameStateLocal = 3;
+    bleGameStateCharacteristic->setValue(gameStateLocal);
+    bleGameStateCharacteristic->notify();
+  }
 }
 
 
@@ -530,10 +555,21 @@ void broadcastBleServer() {
 
 bool checkDistance() {
   long distance = abs(sqrt(pow((xServer - xClient), 2) + pow((yServer - yClient), 2)));
-  if (distance <= 30) {
+  if (distance <= 10) {
     return false;
   }
   return true;
+}
+void printDistance() {
+  long distance = abs(sqrt(pow((xServer - xClient), 2) + pow((yServer - yClient), 2)));
+  M5.Lcd.setCursor(10, 20);
+  if (chosenPlayer == DRAGON) {
+    M5.Lcd.setTextColor(TFT_PINK);
+  } else {
+    M5.Lcd.setTextColor(TFT_GREEN);
+  }
+  M5.Lcd.setTextSize(1);
+  M5.Lcd.print(distance);
 }
 
 void serverAccelIncrement() {
@@ -564,6 +600,7 @@ void endGame() {
 
 void playGame() {
   M5.Lcd.fillScreen(TFT_BLACK);
+  printDistance();
   // Reverse x/y values to match joystick orientation
   int x = 1023 - gamePad.analogRead(14);
   int y = 1023 - gamePad.analogRead(15);
@@ -612,8 +649,7 @@ void playGame() {
     warpDot();
     delay(1000);
   }
-
-  drawDots(xServer, yServer, xClient, yClient); 
+  drawCharacters(xServer, yServer, xClient, yClient); 
 }
 
 void warpDot() {
@@ -632,9 +668,12 @@ void warpDot() {
   delay(10);
 }
 
-void drawDots(uint32_t serverX, uint32_t serverY, uint32_t clientX, uint32_t clientY){
-  M5.Lcd.drawPixel(serverX, serverY, TFT_RED);
-  M5.Lcd.drawPixel(clientX, clientY, TFT_BLUE);
+void drawCharacters(uint32_t serverX, uint32_t serverY, uint32_t clientX, uint32_t clientY) {
+  if (chosenPlayer == PRINCESS) {
+    drawCharacterImage("princess", 1, serverX, serverY);
+  } else {
+    drawCharacterImage("dragon", 1, serverX, serverY);
+  }
 }
 
 /////////////////////////////////////////////////////////////////
@@ -654,6 +693,50 @@ void drawCenteredBackgroundImage(String iconName, int resizeMult) {
     int yOffset = -(resizeMult * imgSqDim - M5.Lcd.height()) / 2;
     // int xOffset = sWidth - (imgSqDim*resizeMult*.8); // Right align (image doesn't take up entire array)
     int xOffset = (M5.Lcd.width() / 2) - (imgSqDim * resizeMult / 2); // center horizontally
+    
+    // Iterate through each pixel of the imgSqDim x imgSqDim (100 x 100) array
+    for (int y = 0; y < imgSqDim; y++) {
+        for (int x = 0; x < imgSqDim; x++) {
+            // Compute the linear index in the array and get pixel value
+            int pixNum = (y * imgSqDim) + x;
+            uint16_t pixel = iconBitmap[pixNum];
+
+            // If the pixel is black, do NOT draw (treat it as transparent);
+            // otherwise, draw the value
+            if (pixel != 0) {
+                // 16-bit RBG565 values give the high 5 pixels to red, the middle
+                // 6 pixels to green and the low 5 pixels to blue as described
+                // here: http://www.barth-dev.de/online/rgb565-color-picker/
+                byte red = (pixel >> 11) & 0b0000000000011111;
+                red = red << 3;
+                byte green = (pixel >> 5) & 0b0000000000111111;
+                green = green << 2;
+                byte blue = pixel & 0b0000000000011111;
+                blue = blue << 3;
+
+                // Scale image; for example, if resizeMult == 2, draw a 2x2
+                // filled square for each original pixel
+                for (int i = 0; i < resizeMult; i++) {
+                    for (int j = 0; j < resizeMult; j++) {
+                        int xDraw = x * resizeMult + i + xOffset;
+                        int yDraw = y * resizeMult + j + yOffset;
+                        M5.Lcd.drawPixel(xDraw, yDraw, M5.Lcd.color565(red, green, blue));
+                    }
+                }
+            }
+        }
+    }
+}
+
+void drawCharacterImage(String iconName, int resizeMult, int xLoc, int yLoc) {
+    // Get the corresponding byte array
+    const uint16_t * iconBitmap = getIconBitmap(iconName);
+
+    // Compute offsets so that the image is centered vertically and is
+    // right-aligned
+    int yOffset = -(resizeMult * imgSqDim - yLoc) / 2;
+    // int xOffset = sWidth - (imgSqDim*resizeMult*.8); // Right align (image doesn't take up entire array)
+    int xOffset = xLoc - (imgSqDim * resizeMult / 2); // center horizontally
     
     // Iterate through each pixel of the imgSqDim x imgSqDim (100 x 100) array
     for (int y = 0; y < imgSqDim; y++) {
