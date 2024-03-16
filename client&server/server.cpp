@@ -601,6 +601,11 @@ String milis_to_seconds(long milis) {
 }
 
 void endGame() {
+  int val = 4;
+  bleGameStateCharacteristic->setValue(val);
+  bleGameStateCharacteristic->notify();
+  delay(10);
+
   M5.Lcd.fillScreen(TFT_BLACK);
   M5.Lcd.setTextColor(TFT_RED);
   M5.Lcd.setTextSize(3);

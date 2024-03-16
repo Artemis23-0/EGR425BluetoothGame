@@ -638,6 +638,9 @@ void clientAccelIncrement() {
 }
 
 void endGame() {
+  String x = String(4);
+  bleGameStateCharacteristic->writeValue(x.c_str(), false);
+
   M5.Lcd.fillScreen(TFT_BLACK);
   M5.Lcd.setTextColor(TFT_RED);
   M5.Lcd.setTextSize(3);
