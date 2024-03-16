@@ -16,7 +16,6 @@ static BLEAdvertisedDevice *bleRemoteServer;
 static boolean doConnect = false;
 static boolean doScan = false;
 bool deviceConnected = false;
-int timer = 0;
 
 
 // Location Characteristics/Variables
@@ -71,13 +70,21 @@ Button PRINCESS_BTN(160, 100, 100, 50, false, "PRINCESS", offCol, onCol);
 Button TUTORIAL(10, 190, 100, 50, false, "Tutorial", offColTut, onCol);
 Button START(210, 190, 100, 50, false, "Start", offColStart, onCol);
 Button ENDTUTORIAL(100, 60, 100, 50, false, "X", offColTut, onCol);
+Button PLAYAGAIN(100, 190, 100, 50, false, "Start", offColStart, onCol);
 
 // coordinates
 
 int xServer = 0, yServer = 0, xClient = 300, yClient = 120;
 
 // acceleration
-int acceleration = 1;
+int acceleration = 5;
+
+// Timer
+int countdownTime = 120000; // Two minutes
+int prevTime = 0;
+int currTime = 0;
+bool timerHasBeenStarted = false; 
+bool timeRanOut = false;
 
 ///////////////////////////////////////////////////////////////
 // Forward Declarations
@@ -95,10 +102,12 @@ void tutorialTapped(Event& e);
 void startTapped(Event& e);
 void startTutorial();
 void endTutorialTapped(Event& e);
+void playAgainTapped(Event& e);
 void hideButtons();
 void drawCharacters(uint32_t serverX, uint32_t serverY, uint32_t clientX, uint32_t clientY);
 void drawCharacterImage(String iconName, int resizeMult, int xLoc, int yLoc);
 void printDistance();
+void checkTimeAndPrint();
 
 void clientAccelIncrement();
 String milis_to_seconds(long milis);
@@ -404,15 +413,15 @@ void loop()
         } else if (gameState == S_TUTORIAL) {
           startTutorial();
         }
+        prevTime = millis();
       } else {
+        timerHasBeenStarted = true;
+        checkTimeAndPrint();
         bool stillPlaying = checkDistance();
           if (gameState == S_GAME && stillPlaying) {
             playGame();
             locationWasUpdated = false;
         } else {
-            if (timer == 0) {
-            timer = millis();
-            }
             endGame();
             delay(50000);
         }
@@ -551,6 +560,13 @@ void startTapped(Event& e) {
   }
 }
 
+void playAgainTapped(Event& e) {
+  gameState = S_PLAYER_SELECT;
+  String val = String(1);
+  bleGameStateCharacteristic->writeValue(val.c_str(), false);
+  delay(10);
+}
+
 ///////////////////////////////////////////////////////////////
 // Creates a tutorial screen
 ///////////////////////////////////////////////////////////////
@@ -594,6 +610,25 @@ void printDistance() {
   M5.Lcd.print(distance);
 }
 
+void checkTimeAndPrint() {
+  currTime = millis();
+  unsigned long remainingTime = countdownTime - (currTime - prevTime);
+  if (remainingTime <= 0) {
+    gameState = S_GAME_OVER;
+    String x = String(4);
+    bleGameStateCharacteristic->writeValue(x.c_str(), false);
+    timeRanOut = true;
+  }
+  unsigned long minutes = remainingTime / 60;
+  unsigned long seconds = remainingTime % 60;
+  M5.Lcd.setTextColor(TFT_WHITE);
+  M5.Lcd.setTextSize(1);
+  M5.Lcd.setCursor(210, 20);
+  M5.Lcd.print(minutes);
+  M5.Lcd.print(":");
+  M5.Lcd.print(seconds);
+}
+
 void clientAccelIncrement() {
   if (acceleration == 5) {
     acceleration = 1;
@@ -603,13 +638,20 @@ void clientAccelIncrement() {
 }
 
 void endGame() {
-  M5.Lcd.fillScreen(TFT_MAGENTA);
-  M5.Lcd.setTextColor(TFT_BLACK);
+  M5.Lcd.fillScreen(TFT_BLACK);
+  M5.Lcd.setTextColor(TFT_RED);
   M5.Lcd.setTextSize(3);
-  M5.Lcd.drawString("GAME OVER", M5.Lcd.width() / 4, M5.Lcd.height() / 2 - 30);
-  M5.Lcd.setTextSize(2);
-  M5.Lcd.drawString("YOU LASTED FOR", M5.Lcd.width() / 4, M5.Lcd.height() / 2);
-  M5.Lcd.drawString(milis_to_seconds(timer), M5.Lcd.width() / 4, M5.Lcd.height() - 100);
+
+  if (timeRanOut && chosenPlayer == PRINCESS) {
+    M5.Lcd.drawString("YOU LOST", M5.Lcd.width() / 4, M5.Lcd.height() / 2 - 30);
+  } else if (timeRanOut && chosenPlayer == DRAGON) {
+      M5.Lcd.drawString("YOU WON", M5.Lcd.width() / 4, M5.Lcd.height() / 2 - 30);
+  } else if (!timeRanOut && chosenPlayer == DRAGON)  {
+    M5.Lcd.drawString("YOU LOST", M5.Lcd.width() / 4, M5.Lcd.height() / 2 - 30);
+  } else {
+    M5.Lcd.drawString("YOU WON", M5.Lcd.width() / 4, M5.Lcd.height() / 2 - 30);
+  }
+  PLAYAGAIN.draw();
 }
 
 void drawCharacters(uint32_t serverX, uint32_t serverY, uint32_t clientX, uint32_t clientY){
@@ -750,8 +792,7 @@ void drawCharacterImage(String iconName, int resizeMult, int xLoc, int yLoc) {
 
     // Compute offsets so that the image is centered vertically and is
     // right-aligned
-    int yOffset = -(resizeMult * imgSqDim - yLoc) / 2;
-    // int xOffset = sWidth - (imgSqDim*resizeMult*.8); // Right align (image doesn't take up entire array)
+    int yOffset = yLoc - (imgSqDim * resizeMult / 2); // center vertically    // int xOffset = sWidth - (imgSqDim*resizeMult*.8); // Right align (image doesn't take up entire array)
     int xOffset = xLoc - (imgSqDim * resizeMult / 2); // center horizontally
     
     // Iterate through each pixel of the imgSqDim x imgSqDim (100 x 100) array

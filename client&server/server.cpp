@@ -17,9 +17,6 @@ BLEServer *bleServer;
 BLEService *bleService;
 bool deviceConnected = false;
 bool previouslyConnected = false;
-int timer = 0;
-unsigned long lastTime = 0;
-unsigned long timerDelay = 500;
 
 // Location Characteristics/Variables
 BLECharacteristic *bleReadXCharacteristic;
@@ -77,12 +74,20 @@ Button PRINCESS_BTN(160, 100, 100, 50, false, "PRINCESS", offCol, onCol);
 Button TUTORIAL(10, 190, 100, 50, false, "Tutorial", offColTut, onCol);
 Button START(210, 190, 100, 50, false, "Start", offColStart, onCol);
 Button ENDTUTORIAL(100, 60, 100, 50, false, "X", offColTut, onCol);
+Button PLAYAGAIN(100, 190, 100, 50, false, "Start", offColStart, onCol);
 
 // joystick and button coordinates
 int xServer = 10, yServer = 120, xClient = 0, yClient = 0;
 
 // joystick and button acceleration
-int acceleration = 1;
+int acceleration = 5;
+
+// Timer
+int countdownTime = 120000; // Two minutes
+int prevTime = 0;
+int currTime = 0;
+bool timerHasBeenStarted = false; 
+bool timeRanOut = false;
 
 ///////////////////////////////////////////////////////////////
 // BLE Server Callback Methods
@@ -220,11 +225,13 @@ void tutorialTapped(Event& e);
 void startTapped(Event& e);
 void startTutorial();
 void endTutorialTapped(Event& e);
+void playAgainTapped(Event& e);
 void hideButtons();
 
 void drawCharacters(uint32_t serverX, uint32_t serverY, uint32_t clientX, uint32_t clientY);
 void drawCharacterImage(String iconName, int resizeMult, int xLoc, int yLoc);
 void printDistance();
+void checkTimeAndPrint();
 
 void serverAccelIncrement();
 String milis_to_seconds(long milis);
@@ -296,6 +303,8 @@ void loop()
           startTutorial();
         }
       } else {
+        timerHasBeenStarted = true;
+        checkTimeAndPrint();
         bool stillPlaying = checkDistance();
         if (gameState == S_GAME && stillPlaying) {
           playGame();
@@ -310,16 +319,12 @@ void loop()
         }
         locationWasUpdated = false;
         } else {
-          if (timer == 0) {
-          timer = millis();
-          }
           endGame();
           delay(50000);
         }
       }
       chooseCharacterScreenUpdated = false;
     } else if (previouslyConnected) {
-      timer = 0;
     }
 }
 
@@ -460,6 +465,13 @@ void startTapped(Event& e) {
   }
 }
 
+void playAgainTapped(Event& e) {
+  gameState = S_PLAYER_SELECT;
+  int gameStateLocal = 1;
+  bleGameStateCharacteristic->setValue(gameStateLocal);
+  bleGameStateCharacteristic->notify();
+}
+
 
 ///////////////////////////////////////////////////////////////
 // Creates a tutorial screen
@@ -589,13 +601,19 @@ String milis_to_seconds(long milis) {
 }
 
 void endGame() {
-  M5.Lcd.fillScreen(TFT_MAGENTA);
-  M5.Lcd.setTextColor(TFT_BLACK);
+  M5.Lcd.fillScreen(TFT_BLACK);
+  M5.Lcd.setTextColor(TFT_RED);
   M5.Lcd.setTextSize(3);
-  M5.Lcd.drawString("GAME OVER", M5.Lcd.width() / 4, M5.Lcd.height() / 2 - 30);
-  M5.Lcd.setTextSize(2);
-  M5.Lcd.drawString("YOU LASTED FOR", M5.Lcd.width() / 4, M5.Lcd.height() / 2);
-  M5.Lcd.drawString(milis_to_seconds(timer), M5.Lcd.width() / 4, M5.Lcd.height() - 100);
+  if (timeRanOut && chosenPlayer == PRINCESS) {
+    M5.Lcd.drawString("YOU LOST", M5.Lcd.width() / 4, M5.Lcd.height() / 2 - 30);
+  } else if (timeRanOut && chosenPlayer == DRAGON) {
+      M5.Lcd.drawString("YOU WON", M5.Lcd.width() / 4, M5.Lcd.height() / 2 - 30);
+  } else if (!timeRanOut && chosenPlayer == DRAGON)  {
+    M5.Lcd.drawString("YOU LOST", M5.Lcd.width() / 4, M5.Lcd.height() / 2 - 30);
+  } else {
+    M5.Lcd.drawString("YOU WON", M5.Lcd.width() / 4, M5.Lcd.height() / 2 - 30);
+  }
+  PLAYAGAIN.draw();
 }
 
 void playGame() {
@@ -676,6 +694,26 @@ void drawCharacters(uint32_t serverX, uint32_t serverY, uint32_t clientX, uint32
   }
 }
 
+void checkTimeAndPrint() {
+  currTime = millis();
+  unsigned long remainingTime = countdownTime - (currTime - prevTime);
+  if (remainingTime <= 0) {
+    gameState = S_GAME_OVER;
+    int val = 4; 
+    bleGameStateCharacteristic->setValue(val);
+    bleGameStateCharacteristic->notify();
+    timeRanOut = true;
+  }
+  unsigned long minutes = remainingTime / 60;
+  unsigned long seconds = remainingTime % 60;
+  M5.Lcd.setTextColor(TFT_WHITE);
+  M5.Lcd.setTextSize(1);
+  M5.Lcd.setCursor(210, 20);
+  M5.Lcd.print(minutes);
+  M5.Lcd.print(":");
+  M5.Lcd.print(seconds);
+}
+
 /////////////////////////////////////////////////////////////////
 // This method takes in an image icon string (from API) and a 
 // resize multiple and draws the corresponding image (bitmap byte
@@ -734,8 +772,7 @@ void drawCharacterImage(String iconName, int resizeMult, int xLoc, int yLoc) {
 
     // Compute offsets so that the image is centered vertically and is
     // right-aligned
-    int yOffset = -(resizeMult * imgSqDim - yLoc) / 2;
-    // int xOffset = sWidth - (imgSqDim*resizeMult*.8); // Right align (image doesn't take up entire array)
+    int yOffset = yLoc - (imgSqDim * resizeMult / 2); // center vertically    // int xOffset = sWidth - (imgSqDim*resizeMult*.8); // Right align (image doesn't take up entire array)
     int xOffset = xLoc - (imgSqDim * resizeMult / 2); // center horizontally
     
     // Iterate through each pixel of the imgSqDim x imgSqDim (100 x 100) array
