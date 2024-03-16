@@ -73,8 +73,8 @@ Button DRAGON_BTN(50, 100, 100, 50, false, "DRAGON", offCol, onCol);
 Button PRINCESS_BTN(160, 100, 100, 50, false, "PRINCESS", offCol, onCol);
 Button TUTORIAL(10, 190, 100, 50, false, "Tutorial", offColTut, onCol);
 Button START(210, 190, 100, 50, false, "Start", offColStart, onCol);
-Button ENDTUTORIAL(100, 60, 100, 50, false, "X", offColTut, onCol);
-Button PLAYAGAIN(100, 190, 100, 50, false, "Start", offColStart, onCol);
+Button ENDTUTORIAL(210, 10, 100, 50, false, "X", offColTut, onCol);
+Button PLAYAGAIN(100, 190, 100, 50, false, "Play Again", offColStart, onCol);
 
 // joystick and button coordinates
 int xServer = 10, yServer = 120, xClient = 0, yClient = 0;
@@ -287,6 +287,7 @@ void setup()
     TUTORIAL.addHandler(tutorialTapped, E_TAP);
     START.addHandler(startTapped, E_TAP);
     ENDTUTORIAL.addHandler(endTutorialTapped, E_TAP);
+    PLAYAGAIN.addHandler(playAgainTapped, E_TAP);
 }
 
 ///////////////////////////////////////////////////////////////
@@ -320,7 +321,6 @@ void loop()
         locationWasUpdated = false;
         } else {
           endGame();
-          delay(50000);
         }
       }
       chooseCharacterScreenUpdated = false;
@@ -477,7 +477,17 @@ void playAgainTapped(Event& e) {
 // Creates a tutorial screen
 ///////////////////////////////////////////////////////////////
 void startTutorial() {
+  M5.Lcd.fillScreen(TFT_BLACK);
+  M5.Lcd.setCursor(0, 100);
+  M5.Lcd.setTextColor(TFT_RED);
+  M5.Lcd.setTextSize(1);
+  ENDTUTORIAL.draw();
 
+  M5.Lcd.println("- Princess has 2min to catch dragon");
+  M5.Lcd.println("- Dragon can slow princess down (3x)");
+  M5.Lcd.println("- Princess can get location radius (3x)");
+  M5.Lcd.println("- Timer: Top right");
+  M5.Lcd.println("- Distance: Top left");
 }
 
 ///////////////////////////////////////////////////////////
@@ -485,7 +495,11 @@ void startTutorial() {
 ///////////////////////////////////////////////////////////////
 void endTutorialTapped(Event& e) {
   gameState = S_PLAYER_SELECT;
-  chooseCharacterScreenUpdated;
+  chooseCharacterScreenUpdated = true;
+  int val = 1;
+  bleGameStateCharacteristic->setValue(val);
+  bleGameStateCharacteristic->notify();
+  delay(10);
 }
 
 ///////////////////////////////////////////////////////////////
