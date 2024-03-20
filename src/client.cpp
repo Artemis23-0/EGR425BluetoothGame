@@ -18,6 +18,7 @@ static boolean doScan = false;
 bool deviceConnected = false;
 
 
+
 // Location Characteristics/Variables
 BLERemoteCharacteristic *bleReadXCharacteristic;
 BLERemoteCharacteristic *bleReadYCharacteristic;
@@ -26,8 +27,12 @@ BLERemoteCharacteristic *bleReadWriteYCharacteristic;
 bool locationWasUpdated = true;
 
 // Gameplay Characteristics/Variables
-bool chooseCharacterScreenUpdated = false;
-// TODO: Add characteristics for each player's player type (2) and when an opponents powerup is used (2), and gamestate (1)
+bool screenUpdated = false;
+bool gameEnded = false;
+bool playingAgain = false;
+
+//Characteristics for each player's player type (2) and when an opponents powerup is used (2), and gamestate (1)
+
 BLERemoteCharacteristic *bleLocalPlayerSelectionCharacteristic; // Our local, corresponds to server's opponent
 BLERemoteCharacteristic *bleOpponentPlayerSelectionCharacteristic; // Our opponent, corresponds to server's local
 BLERemoteCharacteristic *bleGameStateCharacteristic;
@@ -73,18 +78,25 @@ Button ENDTUTORIAL(210, 10, 100, 50, false, "X", offColTut, onCol);
 Button PLAYAGAIN(100, 190, 100, 50, false, "Play again", offColStart, onCol);
 
 // coordinates
-
 int xServer = 0, yServer = 0, xClient = 300, yClient = 120;
 
 // acceleration
 int acceleration = 5;
 
 // Timer
-int countdownTime = 120000; // Two minutes
+int countdownTime = 120000; // Two minutes to catch them
 int prevTime = 0;
 int currTime = 0;
 bool timerHasBeenStarted = false; 
 bool timeRanOut = false;
+
+// Powerup
+int powerupsLeft = 3; // players start with 3 powerups
+bool powerupsStillAvailable = true; 
+int powerupTime = 3000; // powerups last 3 seconds
+int powerupStartTime = 0;
+bool dragonPowerupActive = false;
+bool princessPowerupActive = false;
 
 ///////////////////////////////////////////////////////////////
 // Forward Declarations
@@ -108,13 +120,14 @@ void drawCharacters(uint32_t serverX, uint32_t serverY, uint32_t clientX, uint32
 void drawCharacterImage(String iconName, int resizeMult, int xLoc, int yLoc);
 void printDistance();
 void checkTimeAndPrint();
+void addressPowerup();
 
 void clientAccelIncrement();
 String milis_to_seconds(long milis);
 void playGame();
 void endGame();
 bool checkDistance();
-void warpDot();
+void usePowerup();
 
 ///////////////////////////////////////////////////////////////
 // BLE Client Callback Methods
@@ -125,26 +138,21 @@ void warpDot();
 static void notifyXCallback(BLERemoteCharacteristic *pBLERemoteCharacteristic, uint8_t *pData, size_t length, bool isNotify)
 {
     String characteristicUUID = pBLERemoteCharacteristic->getUUID().toString().c_str();
-    Serial.printf("Notify callback for characteristic %s of data length %d\n", pBLERemoteCharacteristic->getUUID().toString().c_str(), length);
       xServer = (int32_t)(pData[3] << 24 | pData[2] << 16 | pData[1] << 8 | pData[0]);
-      Serial.printf("\tValue was: %i", xServer);
       delay(10);
 }
 
 static void notifyYCallback(BLERemoteCharacteristic *pBLERemoteCharacteristic, uint8_t *pData, size_t length, bool isNotify)
 {
     String characteristicUUID = pBLERemoteCharacteristic->getUUID().toString().c_str();
-    Serial.printf("Notify callback for characteristic %s of data length %d\n", pBLERemoteCharacteristic->getUUID().toString().c_str(), length);
-          yServer = (int32_t)(pData[3] << 24 | pData[2] << 16 | pData[1] << 8 | pData[0]);
-      Serial.printf("\tValue was: %i", yServer);
-      delay(10);
+    yServer = (int32_t)(pData[3] << 24 | pData[2] << 16 | pData[1] << 8 | pData[0]);
+    delay(10);
 }
 
 static void notifyOpponentCharacterCallback(BLERemoteCharacteristic *pBLERemoteCharacteristic, uint8_t *pData, size_t length, bool isNotify)
 {
     String characteristicUUID = pBLERemoteCharacteristic->getUUID().toString().c_str();
     Serial.printf("Notify callback for characteristic %s of data length %d\n", pBLERemoteCharacteristic->getUUID().toString().c_str(), length);
-    Serial.print("VAL fucker:");
     Serial.println((int32_t)pData);
     int32_t opponentVal = (int32_t)(pData[3] << 24 | pData[2] << 16 | pData[1] << 8 | pData[0]);
     if (opponentVal == 1) {
@@ -169,11 +177,25 @@ static void notifyGameStateCallback(BLERemoteCharacteristic *pBLERemoteCharacter
     if (gameVal == 1 || gameVal == 2) {
       gameState = gameState;
     } else if (gameVal == 3) {
+      if (gameState == S_GAME_OVER) {
+        xClient = 300, yClient = 120;
+        String x = String(xClient);
+        bleReadWriteXCharacteristic->writeValue(x.c_str(), false);
+        String y = String(yClient);
+        bleReadWriteYCharacteristic->writeValue(y.c_str(), false);
+        String cha = String(3);
+        bleLocalPlayerSelectionCharacteristic->writeValue(cha.c_str(), false);
+        playingAgain = true;
+      } else {
+        prevTime = millis();
+      }
       gameState = S_GAME;
+      gameEnded = true;
     } else {
       gameState = S_GAME_OVER;
     }
     Serial.printf("\tValue was: %i", gameVal);
+    screenUpdated = true;
     delay(10);
 }
 
@@ -187,14 +209,14 @@ class MyClientCallback : public BLEClientCallbacks
     void onConnect(BLEClient *pclient)
     {
         deviceConnected = true;
-        chooseCharacterScreenUpdated = true;
+        screenUpdated = true;
         Serial.println("Device connected...");
     }
 
     void onDisconnect(BLEClient *pclient)
     {
         deviceConnected = false;
-        chooseCharacterScreenUpdated = false;
+        screenUpdated = false;
         Serial.println("Device disconnected...");
     }
 };
@@ -212,8 +234,8 @@ bool connectToServer()
 
     // Connect to the remote BLE Server.
     if (!bleClient->connect(bleRemoteServer))
-        Serial.printf("FAILED to connect to server (%s)\n", bleRemoteServer->getName().c_str());
-    Serial.printf("\tConnected to server (%s)\n", bleRemoteServer->getName().c_str());
+      Serial.printf("FAILED to connect to server (%s)\n", bleRemoteServer->getName().c_str());
+      Serial.printf("\tConnected to server (%s)\n", bleRemoteServer->getName().c_str());
 
     // Obtain a reference to the service we are after in the remote BLE server.
     BLERemoteService *bleRemoteService = bleClient->getService(SERVICE_UUID);
@@ -222,6 +244,7 @@ bool connectToServer()
         bleClient->disconnect();
         return false;
     }
+
     Serial.printf("\tFound our service UUID: %s\n", SERVICE_UUID.toString().c_str());
 
     // Obtain a reference to the characteristic in the service of the remote BLE server.
@@ -239,7 +262,6 @@ bool connectToServer()
         return false;
     }
     Serial.printf("\tFound our characteristic UUID: %s\n", READ_Y_CHARACTERISTIC_UUID.toString().c_str());
-
     
     bleReadWriteXCharacteristic = bleRemoteService->getCharacteristic(READ_WRITE_X_CHARACTERISTIC_UUID);
     if (bleReadWriteXCharacteristic == nullptr) {
@@ -276,12 +298,13 @@ bool connectToServer()
     Serial.printf("\tFound our characteristic UUID: %s\n", GAME_STATE_UUID.toString().c_str());
 
     bleLocalPlayerSelectionCharacteristic = bleRemoteService->getCharacteristic(LOCAL_PLAYER_SELECTION_UUID);
-    if (bleGameStateCharacteristic == nullptr) {
+    if (bleLocalPlayerSelectionCharacteristic == nullptr) {
         Serial.printf("Failed to find our characteristic UUID: %s\n", LOCAL_PLAYER_SELECTION_UUID.toString().c_str());
         bleClient->disconnect();
         return false;
     }
     Serial.printf("\tFound our characteristic UUID: %s\n", LOCAL_PLAYER_SELECTION_UUID.toString().c_str());
+
 
     // Check if server's characteristic can notify client of changes and register to listen if so
     if (bleReadXCharacteristic->canNotify()) {
@@ -293,13 +316,14 @@ bool connectToServer()
       bleReadYCharacteristic->registerForNotify(notifyYCallback);
     }
     if (bleOpponentPlayerSelectionCharacteristic->canNotify()) {
-      Serial.println("X can notify");
+      Serial.println("Opponent Character can notify");
       bleOpponentPlayerSelectionCharacteristic->registerForNotify(notifyOpponentCharacterCallback);
     }
     if (bleGameStateCharacteristic->canNotify()) {
-      Serial.println("X can notify");
+      Serial.println("Game State can notify");
       bleGameStateCharacteristic->registerForNotify(notifyGameStateCallback);
     }
+
     return true;
 }
 
@@ -347,6 +371,9 @@ void setup()
 
     // Draw the game intro screen
     drawTitleScreen();
+    
+    // Draw the waiting for second player screen
+    drawWaitingScreen();
 
     // Retrieve a Scanner and set the callback we want to use to be informed when we
     // have detected a new device.  Specify that we want active scanning and start the
@@ -357,9 +384,6 @@ void setup()
     pBLEScan->setWindow(449);
     pBLEScan->setActiveScan(true);
     pBLEScan->start(0, false);
-
-    // Draw the waiting for second player screen
-    drawWaitingScreen();
     
     // Gameplay setup
     if(!gamePad.begin(0x50)){
@@ -399,7 +423,7 @@ void loop()
             delay(3000);
         }
         else {
-            Serial.println("We have failed to connect to the server; there is nothin more we will do.");
+            Serial.println("We have failed to connect to the server; there is nothing more we will do.");
             delay(3000);
         }
     }
@@ -409,24 +433,51 @@ void loop()
     if (deviceConnected)
     {
       if (gameState != S_GAME && gameState != S_GAME_OVER) {
-        if (gameState == S_PLAYER_SELECT && chooseCharacterScreenUpdated) {
+        if (gameState == S_PLAYER_SELECT && screenUpdated || playingAgain) {
           chooseCharacter();
-        } else if (gameState == S_TUTORIAL) {
+          playingAgain = false;
+        } else if (gameState == S_TUTORIAL && screenUpdated) {
           startTutorial();
         }
         prevTime = millis();
       } else {
         timerHasBeenStarted = true;
-        checkTimeAndPrint();
-        bool stillPlaying = checkDistance();
-          if (gameState == S_GAME && stillPlaying) {
+        M5.Lcd.fillRect(0, 0, 50, 50, TFT_BLACK);
+        M5.Lcd.fillRect(200, 10, 50, 50, TFT_BLACK);
+        if (gameState == S_GAME) {
+          checkTimeAndPrint();
+          if (checkDistance()) {
             playGame();
+            if (locationWasUpdated || playingAgain) {
+                M5.Lcd.fillScreen(TFT_BLACK);
+                drawCharacters(xServer, yServer, xClient, yClient); 
+                playingAgain = false;
+            } 
+            currTime = millis();
+            // Have power up if powerup time > current time > powerup time - 3000
+            if ((currTime - powerupStartTime < powerupTime) && (dragonPowerupActive || princessPowerupActive)) {
+              addressPowerup();
+              Serial.println("Powerup is active");
+            } 
+            if (!((currTime - powerupStartTime < powerupTime)) && (dragonPowerupActive || princessPowerupActive)) {
+              Serial.println("Powerup has ended");
+              playingAgain = true;
+              if (dragonPowerupActive) {
+                dragonPowerupActive = false;
+              } else {
+                princessPowerupActive = false;
+              }
+            }
+          }
             locationWasUpdated = false;
         } else {
+          if (gameEnded) {
             endGame();
+            gameEnded = false;
+          }
         }
       }
-      chooseCharacterScreenUpdated = false;
+      screenUpdated = false;
     } else if (doScan) {
         BLEDevice::getScan()->start(0); // this is just example to start scan after disconnect, most likely there is better way to do it in arduino
     }
@@ -521,7 +572,7 @@ void princessTapped(Event& e) {
     String val = String(1);
     bleLocalPlayerSelectionCharacteristic->writeValue(val.c_str(), false);
     delay(10);
-    chooseCharacterScreenUpdated = true;
+    screenUpdated = true;
   }
 }
 
@@ -534,7 +585,7 @@ void dragonTapped(Event& e) {
     String val = String(2);
     bleLocalPlayerSelectionCharacteristic->writeValue(val.c_str(), false);
     delay(10);
-    chooseCharacterScreenUpdated = true;
+    screenUpdated = true;
   }
 }
 
@@ -544,6 +595,7 @@ void dragonTapped(Event& e) {
 void tutorialTapped(Event& e) {
   gameState = S_TUTORIAL;
   String val = String(2);
+  screenUpdated = true;
   bleGameStateCharacteristic->writeValue(val.c_str(), false);
   delay(10);
  }
@@ -552,19 +604,40 @@ void tutorialTapped(Event& e) {
 // Starts game
 ///////////////////////////////////////////////////////////////
 void startTapped(Event& e) {
+  hideButtons();
   if (opponentPlayer != UNCHOSEN && chosenPlayer != UNCHOSEN) {
     gameState = S_GAME;
+    screenUpdated = true;
     String val = String(3);
     bleGameStateCharacteristic->writeValue(val.c_str(), false);
     delay(10);
+    prevTime = millis();
   }
 }
 
 void playAgainTapped(Event& e) {
+  hideButtons();
+  playingAgain = true;
   gameState = S_PLAYER_SELECT;
+  chosenPlayer = UNCHOSEN;
+  screenUpdated = true;
   String val = String(1);
+  String val2 = String(3);
   bleGameStateCharacteristic->writeValue(val.c_str(), false);
+  bleLocalPlayerSelectionCharacteristic->writeValue(val2.c_str(), false);
   delay(10);
+  powerupsLeft = 3;
+  powerupsStillAvailable = true;
+  prevTime = millis();
+}
+
+void hideButtons() {
+  PRINCESS_BTN.hide();
+  DRAGON_BTN.hide();
+  TUTORIAL.hide();
+  START.hide();
+  ENDTUTORIAL.hide();
+  PLAYAGAIN.hide();
 }
 
 ///////////////////////////////////////////////////////////////
@@ -578,8 +651,10 @@ void startTutorial() {
   ENDTUTORIAL.draw();
 
   M5.Lcd.println("- Princess has 2min to catch dragon");
-  M5.Lcd.println("- Dragon can slow princess down (3x)");
-  M5.Lcd.println("- Princess can get location radius (3x)");
+  M5.Lcd.println("- Dragon see princess for 3sec (3x)");
+  M5.Lcd.println("  * Press Select");
+  M5.Lcd.println("- Princess can see dragon for 3sec (3x)");
+  M5.Lcd.println("  * Press Select");
   M5.Lcd.println("- Timer: Top right");
   M5.Lcd.println("- Distance: Top left");
 }
@@ -589,7 +664,7 @@ void startTutorial() {
 ///////////////////////////////////////////////////////////////
 void endTutorialTapped(Event& e) {
   gameState = S_PLAYER_SELECT;
-  chooseCharacterScreenUpdated = true;
+  screenUpdated = true;
   String x = String(1);
   bleGameStateCharacteristic->writeValue(x.c_str(), false);
 }
@@ -605,6 +680,9 @@ String milis_to_seconds(long milis) {
 bool checkDistance() {
   long distance = abs(sqrt(pow((xServer - xClient), 2) + pow((yServer - yClient), 2)));
   if (distance <= 10) {
+    screenUpdated = true;
+    gameEnded = true;
+    gameState = S_GAME_OVER;
     return false;
   }
   return true;
@@ -612,6 +690,7 @@ bool checkDistance() {
 
 void printDistance() {
   long distance = abs(sqrt(pow((xServer - xClient), 2) + pow((yServer - yClient), 2)));
+  M5.Lcd.fillRect(10, 20, 10, 10, TFT_BLACK);
   M5.Lcd.setCursor(10, 20);
   if (chosenPlayer == DRAGON) {
     M5.Lcd.setTextColor(TFT_PINK);
@@ -622,23 +701,37 @@ void printDistance() {
   M5.Lcd.print(distance);
 }
 
+// countdown timer
 void checkTimeAndPrint() {
   currTime = millis();
-  unsigned long remainingTime = countdownTime - (currTime - prevTime);
+  unsigned long remainingTime = 0;
+  if (countdownTime - (currTime - prevTime) >= 0) {
+    remainingTime = countdownTime - (currTime - prevTime);
+  }
   if (remainingTime <= 0) {
     gameState = S_GAME_OVER;
     String x = String(4);
     bleGameStateCharacteristic->writeValue(x.c_str(), false);
     timeRanOut = true;
+    gameEnded = true;
+    screenUpdated = true;
+    endGame();
   }
-  unsigned long minutes = remainingTime / 60;
-  unsigned long seconds = remainingTime % 60;
-  M5.Lcd.setTextColor(TFT_WHITE);
-  M5.Lcd.setTextSize(1);
-  M5.Lcd.setCursor(210, 20);
-  M5.Lcd.print(minutes);
-  M5.Lcd.print(":");
-  M5.Lcd.print(seconds);
+  unsigned long minutes = (remainingTime / 1000) / 60;
+  unsigned long seconds = (remainingTime  / 1000) % 60;
+
+  if (gameState == S_GAME && remainingTime >= 0) {
+    M5.Lcd.setTextSize(1);
+    M5.Lcd.setCursor(210, 20);
+    M5.Lcd.print(minutes);
+    M5.Lcd.print(":");
+    if (seconds < 10) {
+      String secs = String(seconds);
+      M5.Lcd.print("0"+secs);
+    } else {
+      M5.Lcd.print(seconds);
+    }
+  }
 }
 
 void clientAccelIncrement() {
@@ -652,6 +745,11 @@ void clientAccelIncrement() {
 void endGame() {
   String x = String(4);
   bleGameStateCharacteristic->writeValue(x.c_str(), false);
+  xClient = 300, yClient = 120;
+  String xx = String(xClient);
+  bleReadWriteXCharacteristic->writeValue(xx.c_str(), false);
+  String y = String(yClient);
+  bleReadWriteYCharacteristic->writeValue(y.c_str(), false);
 
   M5.Lcd.fillScreen(TFT_BLACK);
   M5.Lcd.setTextColor(TFT_RED);
@@ -667,6 +765,8 @@ void endGame() {
     M5.Lcd.drawString("YOU WON", M5.Lcd.width() / 4, M5.Lcd.height() / 2 - 30);
   }
   PLAYAGAIN.draw();
+  String cha = String(3);
+  bleLocalPlayerSelectionCharacteristic->writeValue(cha.c_str(), false);
 }
 
 void drawCharacters(uint32_t serverX, uint32_t serverY, uint32_t clientX, uint32_t clientY){
@@ -678,7 +778,6 @@ void drawCharacters(uint32_t serverX, uint32_t serverY, uint32_t clientX, uint32
 }
 
 void playGame() {
-  M5.Lcd.fillScreen(TFT_BLACK);
   printDistance();
   // Reverse x/y values to match joystick orientation
   int x = 1023 - gamePad.analogRead(14);
@@ -691,10 +790,12 @@ void playGame() {
         xClient++;
         String x = String(xClient);
         bleReadWriteXCharacteristic->writeValue(x.c_str(), false);
+        locationWasUpdated = true;
       } else {
         xClient = 0;
         String x = String(xClient);
         bleReadWriteXCharacteristic->writeValue(x.c_str(), false);
+        locationWasUpdated = true;
       }
     }
   } else if (x < 500) {
@@ -703,10 +804,12 @@ void playGame() {
         xClient--;
         String x = String(xClient);
         bleReadWriteXCharacteristic->writeValue(x.c_str(), false);
+        locationWasUpdated = true;
       } else {
         xClient = 320;
         String x = String(xClient);
         bleReadWriteXCharacteristic->writeValue(x.c_str(), false);
+        locationWasUpdated = true;
       }
     }
   }
@@ -717,10 +820,12 @@ void playGame() {
         yClient++;
         String y = String(yClient);
         bleReadWriteYCharacteristic->writeValue(y.c_str(), false);
+        locationWasUpdated = true;
       } else {
         yClient = 0;
         String y = String(yClient);
         bleReadWriteYCharacteristic->writeValue(y.c_str(), false);
+        locationWasUpdated = true;
       }
     }
   } else if (y > 560) {
@@ -729,10 +834,12 @@ void playGame() {
         yClient--;
         String y = String(yClient);
         bleReadWriteYCharacteristic->writeValue(y.c_str(), false);
+        locationWasUpdated = true;
       } else {
         yClient = 240;
         String y = String(yClient);
         bleReadWriteYCharacteristic->writeValue(y.c_str(), false);
+        locationWasUpdated = true;
       }
     }
   }
@@ -740,29 +847,50 @@ void playGame() {
   // For the gamepad buttons
   uint32_t buttons = gamePad.digitalReadBulk(button_mask);
   if (! (buttons & (1UL << BUTTON_SELECT))) {
-    clientAccelIncrement();
-    Serial.print("Button Accel: "); Serial.print(acceleration);
+    usePowerup();
     delay(500);
   }
-  if (! (buttons & (1UL << BUTTON_START))) {
-    warpDot();
-    delay(500);
-  }
-  drawCharacters(xServer, yServer, xClient, yClient); 
 }
 
-void warpDot() {
-  // create random ints for x and y and have the dot drawn there next
-  int randx = rand() % M5.Lcd.width();
-  int randy = rand() % M5.Lcd.height();
-  xClient = randx;
-  yClient = randy;
-  
-  String x = String(xClient);
-  String y = String(yClient);
-  bleReadWriteXCharacteristic->writeValue(x.c_str(), false); //x.length()
-  bleReadWriteYCharacteristic->writeValue(y.c_str(), false); //y.length()
-  drawCharacters(xServer, yServer, xClient, yClient);
+void usePowerup() {
+  Serial.print("Made it to powerup");
+  if (powerupsStillAvailable) {
+    if (chosenPlayer == DRAGON && !dragonPowerupActive) {
+      dragonPowerupActive = true;
+      // Update the amount of powerups left 
+      if (powerupsStillAvailable && powerupsLeft > 0) {
+        powerupsLeft--; 
+      } else {
+        powerupsStillAvailable = false;
+      }
+      powerupStartTime = millis();
+    } else if (chosenPlayer == PRINCESS && !princessPowerupActive) {
+      princessPowerupActive = true;
+      powerupStartTime = millis();
+      // Update the amount of powerups left 
+      if (powerupsStillAvailable && powerupsLeft > 0) {
+        powerupsLeft--; 
+      } else {
+        powerupsStillAvailable = false;
+      }
+    }
+  }
+  screenUpdated = true;
+  locationWasUpdated = true;
+}
+
+void addressPowerup() {
+  if (dragonPowerupActive && chosenPlayer == DRAGON) {
+    M5.Lcd.fillScreen(TFT_BLACK);
+    drawCharacters(xServer, yServer, xClient, yClient); 
+    M5.Lcd.drawPixel(xServer, yServer, TFT_PINK);
+  }
+
+  if (princessPowerupActive && chosenPlayer == PRINCESS) {
+    M5.Lcd.fillScreen(TFT_BLACK);
+    drawCharacters(xServer, yServer, xClient, yClient); 
+    M5.Lcd.drawPixel(xServer, yServer, TFT_GREEN);
+  }
 }
 
 /////////////////////////////////////////////////////////////////
